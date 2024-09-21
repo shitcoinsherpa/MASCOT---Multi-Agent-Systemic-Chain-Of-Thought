@@ -10,7 +10,7 @@ MASCOT is a sophisticated multi-agent system that leverages OpenAI's GPT models 
 - **User-Friendly Interface**: Provides a graphical user interface (GUI) built with Tkinter for ease of use.
 - **Progress Tracking**: Displays real-time progress and detailed outputs from each agent.
 - **Customizable Settings**: Allows users to input their API keys and configure settings within the application.
-- **Customizable Agent profiles and GPT models to use.
+- **Customizable Agent profiles**: Allows easy editing and saving of custom profiles and GPT models to use.
 
 https://github.com/user-attachments/assets/818d0224-6322-4972-8a01-297c91ed5552
 
