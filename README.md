@@ -3,6 +3,10 @@
 
 MASCOT is a sophisticated multi-agent system that leverages OpenAI's GPT models to process user queries through a series of specialized agents. Each agent performs a specific role in understanding, analyzing, researching, and generating comprehensive responses to user inputs. The system is designed to provide detailed, accurate, and well-structured answers by simulating a collaborative workflow among virtual agents.
 
+
+
+https://github.com/user-attachments/assets/818d0224-6322-4972-8a01-297c91ed5552
+
 ## Features
 
 - **Multi-Agent Architecture**: Simulates a team of agents, each with a unique role, working together to process queries.
