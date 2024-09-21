@@ -1,231 +1,25 @@
 import os
-from openai import OpenAI
-import tkinter as tk
-from tkinter import ttk, messagebox
+import json
 import logging
 import threading
-import json
 import requests
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
 from tkinter.scrolledtext import ScrolledText
+import openai
 
 # Set up logging
-logging.basicConfig(filename="app.log", level=logging.DEBUG,
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    filename="app.log",
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 # Global variables
 stop_flag = False
-query_thread = None
 
-# Configuration functions
-def save_config(key, value):
-    config = {}
-    if os.path.exists("config.env"):
-        with open("config.env", "r") as file:
-            for line in file:
-                if '=' in line:
-                    k, v = line.strip().split('=', 1)
-                    config[k] = v
-    config[key] = value
-    with open("config.env", "w") as file:
-        for k, v in config.items():
-            file.write(f"{k}={v}\n")
-    logging.info(f"{key} saved successfully.")
+# Default Agent Profiles
 
-def load_config(key):
-    if os.path.exists("config.env"):
-        with open("config.env", "r") as file:
-            for line in file:
-                if '=' in line:
-                    k, v = line.strip().split('=', 1)
-                    if k == key:
-                        logging.info(f"{key} loaded successfully.")
-                        return v
-    logging.warning(f"{key} not found.")
-    return None
-
-# Application class
-class MultiAgentApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("Multi-Agent System")
-        self.configure_ui()
-        self.load_api_keys()
-
-    def configure_ui(self):
-        # Use ttk for themed widgets
-        self.style = ttk.Style(self)
-        self.style.theme_use('default')
-
-        # Create menu bar
-        self.create_menu()
-
-        # Create main frames
-        self.create_main_frames()
-
-        # Create widgets
-        self.create_widgets()
-
-    def create_menu(self):
-        menubar = tk.Menu(self)
-        self.config(menu=menubar)
-
-        # File menu
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Settings", command=self.open_settings)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.quit)
-        menubar.add_cascade(label="File", menu=file_menu)
-
-    def create_main_frames(self):
-        # Frame for query input
-        self.input_frame = ttk.Frame(self)
-        self.input_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-
-        # Frame for buttons
-        self.button_frame = ttk.Frame(self)
-        self.button_frame.grid(row=0, column=1, padx=10, pady=10, sticky="ns")
-
-        # Frame for progress and status
-        self.status_frame = ttk.Frame(self)
-        self.status_frame.grid(row=1, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
-
-        # Frame for results
-        self.result_frame = ttk.Frame(self)
-        self.result_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="nsew")
-        self.grid_rowconfigure(2, weight=1)
-        self.grid_columnconfigure(0, weight=1)
-
-    def create_widgets(self):
-        # Query label and entry
-        query_label = ttk.Label(self.input_frame, text="Enter your query:")
-        query_label.pack(side=tk.LEFT, padx=(0, 5))
-        self.query_entry = ttk.Entry(self.input_frame, width=60)
-        self.query_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # Submit and Stop buttons
-        submit_button = ttk.Button(self.button_frame, text="Submit", command=self.handle_query)
-        submit_button.pack(side=tk.TOP, pady=(0, 5), fill=tk.X)
-        stop_button = ttk.Button(self.button_frame, text="Stop", command=self.stop_query)
-        stop_button.pack(side=tk.TOP, fill=tk.X)
-
-        # Progress bar
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(self.status_frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.pack(fill=tk.X, padx=5, pady=5)
-
-        # Status label
-        self.status_label = ttk.Label(self.status_frame, text="Ready")
-        self.status_label.pack(side=tk.LEFT, padx=5)
-
-        # ScrolledText for results
-        self.result_text = ScrolledText(self.result_frame, height=20)
-        self.result_text.pack(fill=tk.BOTH, expand=True)
-
-    def open_settings(self):
-        SettingsDialog(self)
-
-    def handle_query(self):
-        user_query = self.query_entry.get()
-        if user_query:
-            self.result_text.delete(1.0, tk.END)
-            self.progress_var.set(0)
-            self.status_label.config(text="Processing...")
-            self.query_entry.config(state=tk.DISABLED)
-            self.query_thread = threading.Thread(target=self.process_query_thread, args=(user_query,))
-            self.query_thread.start()
-        else:
-            messagebox.showerror("Error", "Query cannot be empty.")
-            logging.error("Query cannot be empty.")
-
-    def process_query_thread(self, user_query):
-        final_response = process_query(user_query, self)
-        self.result_text.insert(tk.END, final_response)
-        self.status_label.config(text="Completed")
-        self.query_entry.config(state=tk.NORMAL)
-
-    def stop_query(self):
-        global stop_flag, query_thread
-        stop_flag = True
-        logging.info("Process stopped by user.")
-        self.status_label.config(text="Stopped")
-        if self.query_thread and self.query_thread.is_alive():
-            self.query_thread.join()
-            logging.info("Query thread joined.")
-        self.query_entry.config(state=tk.NORMAL)
-
-    def load_api_keys(self):
-        # Load OpenAI API key
-        self.api_key = load_config("OPENAI_API_KEY")
-        if not self.api_key:
-            self.open_settings()
-            self.api_key = load_config("OPENAI_API_KEY")
-            if not self.api_key:
-                messagebox.showerror("Error", "OpenAI API key is required to proceed.")
-                logging.error("OpenAI API key is required to proceed.")
-                self.quit()
-            else:
-                self.client = OpenAI(api_key=self.api_key)
-        else:
-            self.client = OpenAI(api_key=self.api_key)
-
-        # Load Google API key and Search Engine ID
-        self.google_api_key = load_config("GOOGLE_API_KEY")
-        self.search_engine_id = load_config("SEARCH_ENGINE_ID")
-        if not self.google_api_key or not self.search_engine_id:
-            logging.warning("Google API key or Search Engine ID not provided. Scribe agent will not perform web searches.")
-
-class SettingsDialog(tk.Toplevel):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.title("Settings")
-        self.parent = parent
-        self.create_widgets()
-
-    def create_widgets(self):
-        # OpenAI API Key
-        ttk.Label(self, text="OpenAI API Key:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-        self.openai_entry = ttk.Entry(self, width=50)
-        self.openai_entry.grid(row=0, column=1, padx=5, pady=5)
-        self.openai_entry.insert(0, load_config("OPENAI_API_KEY") or "")
-
-        # Google API Key
-        ttk.Label(self, text="Google API Key:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
-        self.google_entry = ttk.Entry(self, width=50)
-        self.google_entry.grid(row=1, column=1, padx=5, pady=5)
-        self.google_entry.insert(0, load_config("GOOGLE_API_KEY") or "")
-
-        # Search Engine ID
-        ttk.Label(self, text="Search Engine ID:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
-        self.search_engine_entry = ttk.Entry(self, width=50)
-        self.search_engine_entry.grid(row=2, column=1, padx=5, pady=5)
-        self.search_engine_entry.insert(0, load_config("SEARCH_ENGINE_ID") or "")
-
-        # Buttons
-        save_button = ttk.Button(self, text="Save", command=self.save_settings)
-        save_button.grid(row=3, column=0, padx=5, pady=10)
-        cancel_button = ttk.Button(self, text="Cancel", command=self.destroy)
-        cancel_button.grid(row=3, column=1, padx=5, pady=10)
-
-    def save_settings(self):
-        openai_key = self.openai_entry.get().strip()
-        google_key = self.google_entry.get().strip()
-        search_engine_id = self.search_engine_entry.get().strip()
-
-        if openai_key:
-            save_config("OPENAI_API_KEY", openai_key)
-            self.parent.api_key = openai_key
-            self.parent.client = OpenAI(api_key=openai_key)
-        if google_key:
-            save_config("GOOGLE_API_KEY", google_key)
-            self.parent.google_api_key = google_key
-        if search_engine_id:
-            save_config("SEARCH_ENGINE_ID", search_engine_id)
-            self.parent.search_engine_id = search_engine_id
-
-        logging.info("Settings saved.")
-        self.destroy()
-
-# Agent Profiles with Detailed Instructions and Model Assignments
 AGENT_PROFILES = {
     "Echo": {
         "model": "gpt-3.5-turbo",
@@ -238,7 +32,7 @@ AGENT_PROFILES = {
             "- Preserve any emphasis in the user's input, such as italics, bold, or capitalization.\n"
             "- Pass the exact input along for further processing without any modifications.\n"
             "- Capture multiple queries or parts if present, ensuring all are recorded precisely.\n"
-            "- Confirm receipt with a simple acknowledgment if appropriate, but do not modify the input in any way."
+            "- Confirm receipt by repeating the user's query verbatim."
         )
     },
     "Hermes": {
@@ -354,355 +148,846 @@ AGENT_PROFILES = {
             "- Include summaries or abstracts if beneficial to the user.\n"
             "- Focus on presentation and formatting, preserving the content's integrity and meaning.\n"
             "- Present the response professionally and accessibly for the user's benefit.\n"
-            "- Finalize the delivery, ensuring the response effectively addresses the user's query."
+            "- Finalize the delivery, ensuring the response effectively addresses the user's query and the work of all prior agents."
         )
     }
 }
 
-# Function to get search results from Google Search API
-def get_search_result(api_key, search_engine_id, query, num_results=5):
-    service_url = 'https://www.googleapis.com/customsearch/v1'
-    params = {
-        'key': api_key,
-        'cx': search_engine_id,
-        'q': query,
-        'num': num_results,
-    }
-    response = requests.get(service_url, params=params)
-    if response.status_code == 200:
-        results = response.json()
-        search_items = results.get('items', [])
-        summaries = []
-        for item in search_items:
-            summaries.append({
-                'title': item.get('title'),
-                'snippet': item.get('snippet'),
-                'link': item.get('link')
-            })
-        logging.info(f"Search results for query '{query}': {summaries}")
-        return {'results': summaries}
-    else:
-        logging.error(
-            f"Google Search API error: {response.status_code}, {response.text}")
-        return {'error': f"Google Search API error: {response.status_code}, {response.text}"}
+class MultiAgentApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Multi-Agent Systemic Chain of Thought")
+        self.geometry("1000x700")
 
-# Define functions for each agent
-def agent_echo(user_input):
-    if stop_flag:
-        return "Process stopped."
-    try:
-        logging.info("Agent Echo started.")
-        echo_output = user_input
-        logging.info("Agent Echo processed successfully.")
-        return echo_output
-    except Exception as e:
-        logging.error(f"Agent Echo error: {e}")
-        return f"Error in Agent Echo: {e}"
+        self.agent_profiles_file = "agent_profiles.json"
+        self.chat_history_file = "chat_history.json"
+        self.config_file = "config.env"
 
-def agent_hermes(client, echo_output):
-    if stop_flag:
-        return "Process stopped."
-    try:
-        logging.info("Agent Hermes started.")
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Hermes"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Hermes"]["system_prompt"]},
-                {"role": "user", "content": echo_output}
-            ]
-        )
-        hermes_output = response.choices[0].message.content.strip()
-        logging.info("Agent Hermes processed successfully.")
-        return hermes_output
-    except Exception as e:
-        logging.error(f"Agent Hermes error: {e}")
-        return f"Error in Agent Hermes: {e}"
+        self.agent_profiles = AGENT_PROFILES.copy()
+        self.chat_sessions = {}
+        self.api_key = None
+        self.google_api_key = None
+        self.search_engine_id = None
 
-def agent_analyst(client, hermes_output, echo_output):
-    if stop_flag:
-        return "Process stopped."
-    try:
-        logging.info("Agent Analyst started.")
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Analyst"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Analyst"]["system_prompt"]},
-                {"role": "user", "content": echo_output},
-                {"role": "assistant", "content": hermes_output}
-            ]
-        )
-        analyst_output = response.choices[0].message.content.strip()
-        logging.info("Agent Analyst processed successfully.")
-        return analyst_output
-    except Exception as e:
-        logging.error(f"Agent Analyst error: {e}")
-        return f"Error in Agent Analyst: {e}"
+        self.load_config()
+        self.load_agent_profiles()
+        self.create_menu()
+        self.create_widgets()
+        self.load_chat_history()
 
-def agent_scribe(client, analyst_output, echo_output, app):
-    if stop_flag:
-        return "Process stopped."
-    try:
-        logging.info("Agent Scribe started.")
-
-        functions = [
-            {
-                "name": "get_search_result",
-                "description": "Get search results from Google Search API",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query"
-                        }
-                    },
-                    "required": ["query"],
-                },
-            }
-        ]
-
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Scribe"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Scribe"]["system_prompt"]},
-                {"role": "user", "content": echo_output},
-                {"role": "assistant", "content": analyst_output}
-            ],
-            functions=functions,
-            function_call="auto"
-        )
-
-        message = response.choices[0].message
-        if message.function_call:
-            function_name = message.function_call.name
-            arguments = message.function_call.arguments
-            logging.info(f"Function call requested: {function_name} with arguments {arguments}")
-            try:
-                arguments = json.loads(arguments)
-            except json.JSONDecodeError as e:
-                logging.error(f"JSON decode error: {e}")
-                return f"Error in Agent Scribe: JSON decode error: {e}"
-
-            if function_name == "get_search_result":
-                query = arguments.get("query")
-                logging.info(f"Performing search with query: {query}")
-                if not app.google_api_key or not app.search_engine_id:
-                    logging.warning("Google API key or Search Engine ID not provided. Skipping search.")
-                    search_results = {'results': []}
-                else:
-                    search_results = get_search_result(
-                        app.google_api_key, app.search_engine_id, query)
-                    logging.info(f"Search results obtained for query '{query}'")
-
-                messages = [
-                    {"role": "system", "content": AGENT_PROFILES["Scribe"]["system_prompt"]},
-                    {"role": "user", "content": echo_output},
-                    {"role": "assistant", "content": analyst_output},
-                    message.model_dump(),
-                    {"role": "function", "name": function_name, "content": json.dumps(search_results)}
-                ]
-
-                second_response = client.chat.completions.create(
-                    model=AGENT_PROFILES["Scribe"]["model"],
-                    messages=messages
-                )
-                scribe_output = second_response.choices[0].message.content.strip()
-                logging.info("Agent Scribe processed successfully.")
-                return scribe_output
+    def load_config(self):
+        # Load from config.env
+        if os.path.exists(self.config_file):
+            with open(self.config_file, "r") as f:
+                for line in f:
+                    if '=' in line:
+                        key, value = line.strip().split('=', 1)
+                        if key == "OPENAI_API_KEY":
+                            self.api_key = value
+                        elif key == "GOOGLE_API_KEY":
+                            self.google_api_key = value
+                        elif key == "SEARCH_ENGINE_ID":
+                            self.search_engine_id = value
+            if self.api_key:
+                # Set OpenAI API key
+                openai.api_key = self.api_key
+                logging.info("OpenAI API key set.")
             else:
-                logging.error(f"Unknown function: {function_name}")
-                return f"Error in Agent Scribe: Unknown function: {function_name}"
+                logging.warning("OpenAI API key not found in config.env.")
         else:
-            scribe_output = message.content.strip()
+            logging.info("No config.env file found.")
+
+    def load_agent_profiles(self):
+        if os.path.exists(self.agent_profiles_file):
+            with open(self.agent_profiles_file, "r") as f:
+                self.agent_profiles = json.load(f)
+            logging.info("Agent profiles loaded from file.")
+        else:
+            logging.info("No agent profiles file found. Using default profiles.")
+
+    def save_agent_profiles(self):
+        with open(self.agent_profiles_file, "w") as f:
+            json.dump(self.agent_profiles, f, indent=4)
+        logging.info("Agent profiles saved to file.")
+
+    def load_chat_history(self):
+        if os.path.exists(self.chat_history_file):
+            with open(self.chat_history_file, "r") as f:
+                self.chat_sessions = json.load(f)
+            logging.info("Chat sessions loaded.")
+            # Populate the chat history listbox
+            self.history_listbox.delete(0, tk.END)
+            for title in self.chat_sessions.keys():
+                self.history_listbox.insert(tk.END, title)
+        else:
+            logging.info("No chat history file found.")
+
+    def save_chat_sessions(self):
+        with open(self.chat_history_file, "w") as f:
+            json.dump(self.chat_sessions, f, indent=4)
+        logging.info("Chat sessions saved.")
+
+    def create_menu(self):
+        menubar = tk.Menu(self)
+        self.config(menu=menubar)
+
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Settings", command=self.open_settings)
+        file_menu.add_separator()
+        file_menu.add_command(label="New Session", command=self.start_new_session)
+        file_menu.add_command(label="Export Chat", command=self.export_chat_history)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.quit)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        # Profiles menu
+        profiles_menu = tk.Menu(menubar, tearoff=0)
+        profiles_menu.add_command(label="Manage Profiles", command=self.manage_profiles)
+        menubar.add_cascade(label="Profiles", menu=profiles_menu)
+
+    def create_widgets(self):
+        # Main frame
+        main_frame = ttk.Frame(self)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Chat history frame
+        history_frame = ttk.Frame(main_frame)
+        history_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+
+        history_label = ttk.Label(history_frame, text="Chat History:")
+        history_label.pack(anchor="w")
+
+        self.history_listbox = tk.Listbox(history_frame, width=30)
+        self.history_listbox.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.history_listbox.bind('<Double-Button-1>', self.open_chat_session)
+
+        # Conversation display frame
+        conversation_frame = ttk.Frame(main_frame)
+        conversation_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        conversation_label = ttk.Label(conversation_frame, text="Conversation:")
+        conversation_label.pack(anchor="w")
+
+        self.conversation_text = ScrolledText(conversation_frame, wrap=tk.WORD, state='normal')
+        self.conversation_text.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.conversation_text.configure(state='disabled')  # Make it read-only
+
+        # Input frame
+        input_frame = ttk.Frame(self)
+        input_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        self.user_input = ttk.Entry(input_frame)
+        self.user_input.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.user_input.bind('<Return>', self.submit_query)
+
+        # Added Stop button next to the Send button
+        stop_button = ttk.Button(input_frame, text="Stop", command=self.stop_processing)
+        stop_button.pack(side=tk.RIGHT, padx=(0, 10))
+
+        send_button = ttk.Button(input_frame, text="Send", command=self.submit_query)
+        send_button.pack(side=tk.RIGHT)
+
+        # Progress bar
+        self.progress = ttk.Progressbar(self, mode='indeterminate')
+        self.progress.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+    def open_settings(self):
+        SettingsDialog(self)
+
+    def manage_profiles(self):
+        ProfilesDialog(self)
+
+    def stop_processing(self):
+        global stop_flag
+        stop_flag = True
+        self.progress.stop()
+        logging.info("Processing stopped by user.")
+
+    def start_new_session(self):
+        global stop_flag
+        stop_flag = False
+        self.chat_sessions = {}
+        self.history_listbox.delete(0, tk.END)
+        self.conversation_text.configure(state='normal')
+        self.conversation_text.delete(1.0, tk.END)
+        self.conversation_text.configure(state='disabled')
+        self.save_chat_sessions()
+        logging.info("Started a new session.")
+
+    def export_chat_history(self):
+        file_path = filedialog.asksaveasfilename(
+            title="Export Chat History",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if file_path:
+            with open(file_path, "w") as f:
+                json.dump(self.chat_sessions, f, indent=4)
+            messagebox.showinfo("Export Successful", f"Chat history exported to {file_path}.")
+
+    def submit_query(self, event=None):
+        user_query = self.user_input.get().strip()
+        if not user_query:
+            messagebox.showwarning("No Input", "Please enter a query to submit.")
+            return
+        self.user_input.delete(0, tk.END)
+        # Generate title
+        title = ' '.join(user_query.split()[:8])
+        if title not in self.chat_sessions:
+            self.chat_sessions[title] = []
+            self.history_listbox.insert(tk.END, title)
+        # Add user message to conversation
+        self.chat_sessions[title].append({"role": "User", "message": user_query})
+        self.update_conversation_display(title, "User", user_query)
+
+        # Start processing in a new thread
+        global stop_flag
+        stop_flag = False
+        self.progress.start()
+        query_thread = threading.Thread(target=self.process_query, args=(title, user_query))
+        query_thread.start()
+
+    def add_conversation(self, agent_name, content):
+        self.conversation_text.configure(state='normal')
+        self.conversation_text.insert(tk.END, f"{agent_name}: {content}\n\n")
+        self.conversation_text.see(tk.END)
+        self.conversation_text.configure(state='disabled')
+        # Find current session title
+        current_sessions = list(self.chat_sessions.keys())
+        if not current_sessions:
+            return
+        current_title = current_sessions[-1]
+        # Add to chat session
+        self.chat_sessions[current_title].append({"role": agent_name, "message": content})
+        self.save_chat_sessions()
+
+    def update_conversation_display(self, title, role, message):
+        self.conversation_text.configure(state='normal')
+        self.conversation_text.insert(tk.END, f"{role}: {message}\n\n")
+        self.conversation_text.configure(state='disabled')
+        self.conversation_text.see(tk.END)
+
+    def process_query(self, title, user_query):
+        global stop_flag
+        try:
+            # Echo Agent
+            if stop_flag:
+                logging.info("Processing stopped before Echo agent.")
+                return
+            echo = self.agent_echo(user_query)
+        
+            # Hermes Agent
+            if stop_flag:
+                logging.info("Processing stopped before Hermes agent.")
+                return
+            hermes = self.agent_hermes(echo)
+        
+            # Analyst Agent
+            if stop_flag:
+                logging.info("Processing stopped before Analyst agent.")
+                return
+            analyst = self.agent_analyst(hermes)
+        
+            # Scribe Agent
+            if stop_flag:
+                logging.info("Processing stopped before Scribe agent.")
+                return
+            scribe = self.agent_scribe(analyst)
+        
+            # Architect Agent
+            if stop_flag:
+                logging.info("Processing stopped before Architect agent.")
+                return
+            architect = self.agent_architect(echo, hermes, analyst, scribe)
+        
+            # Composer Agent
+            if stop_flag:
+                logging.info("Processing stopped before Composer agent.")
+                return
+            composer = self.agent_composer(architect, analyst, scribe)
+        
+            # Critic Agent
+            if stop_flag:
+                logging.info("Processing stopped before Critic agent.")
+                return
+            critic = self.agent_critic(composer)
+        
+            # Courier Agent
+            if stop_flag:
+                logging.info("Processing stopped before Courier agent.")
+                return
+            courier = self.agent_courier(critic)
+        
+            # Add final output to the conversation
+            self.add_conversation("User", courier)
+            logging.info("All agents processed successfully.")
+        except Exception as e:
+            logging.error(f"Error processing query: {e}")
+            messagebox.showerror("Processing Error", f"An error occurred: {e}")
+        finally:
+            self.progress.stop()
+
+    def agent_echo(self, user_query):
+        try:
+            profile = self.agent_profiles["Echo"]
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": user_query}
+                ]
+            )
+            echo_output = response.choices[0].message.content.strip()
+            self.add_conversation("Echo", echo_output)
+            logging.info("Agent Echo processed successfully.")
+            return echo_output
+        except Exception as e:
+            logging.error(f"Error in Agent Echo: {e}")
+            return f"Error in Agent Echo: {e}"
+
+    def agent_hermes(self, echo_output):
+        try:
+            profile = self.agent_profiles["Hermes"]
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": echo_output}
+                ]
+            )
+            hermes_output = response.choices[0].message.content.strip()
+            self.add_conversation("Hermes", hermes_output)
+            logging.info("Agent Hermes processed successfully.")
+            return hermes_output
+        except Exception as e:
+            logging.error(f"Error in Agent Hermes: {e}")
+            return f"Error in Agent Hermes: {e}"
+
+    def agent_analyst(self, hermes_output):
+        try:
+            profile = self.agent_profiles["Analyst"]
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": hermes_output}
+                ]
+            )
+            analyst_output = response.choices[0].message.content.strip()
+            self.add_conversation("Analyst", analyst_output)
+            logging.info("Agent Analyst processed successfully.")
+            return analyst_output
+        except Exception as e:
+            logging.error(f"Error in Agent Analyst: {e}")
+            return f"Error in Agent Analyst: {e}"
+
+    def agent_scribe(self, analyst_output):
+        try:
+            profile = self.agent_profiles["Scribe"]
+            search_query = analyst_output  # Assuming this is appropriate
+            search_result = get_search_result(search_query, self.google_api_key, self.search_engine_id)
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": search_result}
+                ]
+            )
+            scribe_output = response.choices[0].message.content.strip()
+            self.add_conversation("Scribe", scribe_output)
             logging.info("Agent Scribe processed successfully.")
             return scribe_output
+        except Exception as e:
+            logging.error(f"Error in Agent Scribe: {e}")
+            return f"Error in Agent Scribe: {e}"
 
-    except Exception as e:
-        logging.error(f"Agent Scribe error: {e}")
-        return f"Error in Agent Scribe: {e}"
+    def agent_architect(self, echo_output, hermes_output, analyst_output, scribe_output):
+        try:
+           profile = self.agent_profiles["Architect"]
+           combined_input = (
+                f"Echo Output:\n{echo_output}\n\n"
+                f"Hermes Output:\n{hermes_output}\n\n"
+                f"Analyst Output:\n{analyst_output}\n\n"
+                f"Scribe Output:\n{scribe_output}"
+            )
+           response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": combined_input}
+                ]
+            )
+           architect_output = response.choices[0].message.content.strip()
+           self.add_conversation("Architect", architect_output)
+           logging.info("Agent Architect processed successfully.")
+           return architect_output
+        except Exception as e:
+            logging.error(f"Error in Agent Architect: {e}")
+            return f"Error in Agent Architect: {e}"
 
-def agent_architect(client, hermes_output, analyst_output, scribe_output, echo_output):
-    if stop_flag:
-        return "Process stopped."
+    def agent_composer(self, architect_output, analyst_output, scribe_output):
+        try:
+            profile = self.agent_profiles["Composer"]
+            combined_input = (
+                f"Architect Output:\n{architect_output}\n\n"
+                f"Analyst Output:\n{analyst_output}\n\n"
+                f"Scribe Output:\n{scribe_output}"
+            )
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": combined_input}
+                ]
+            )
+            composer_output = response.choices[0].message.content.strip()
+            self.add_conversation("Composer", composer_output)
+            logging.info("Agent Composer processed successfully.")
+            return composer_output
+        except Exception as e:
+            logging.error(f"Error in Agent Composer: {e}")
+            return f"Error in Agent Composer: {e}"
+
+    def agent_critic(self, composer_output):
+        try:
+            profile = self.agent_profiles["Critic"]
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": composer_output}
+                ]
+            )
+            critic_output = response.choices[0].message.content.strip()
+            self.add_conversation("Critic", critic_output)
+            logging.info("Agent Critic processed successfully.")
+            return critic_output
+        except Exception as e:
+            logging.error(f"Error in Agent Critic: {e}")
+            return f"Error in Agent Critic: {e}"
+
+    def agent_courier(self, critic_output):
+        try:
+            profile = self.agent_profiles["Courier"]
+            response = openai.chat.completions.create(
+                model=profile["model"],
+                messages=[
+                    {"role": "system", "content": profile["system_prompt"]},
+                    {"role": "user", "content": critic_output}
+                ]
+            )
+            courier_output = response.choices[0].message.content.strip()
+            self.add_conversation("Courier", courier_output)
+            logging.info("Agent Courier processed successfully.")
+            return courier_output
+        except Exception as e:
+            logging.error(f"Error in Agent Courier: {e}")
+            return f"Error in Agent Courier: {e}"
+
+    def open_chat_session(self, event):
+        selection = self.history_listbox.curselection()
+        if selection:
+            index = selection[0]
+            title = self.history_listbox.get(index)
+            history = self.chat_sessions.get(title, [])
+            ChatHistoryPopup(self, title, history)
+
+def get_search_result(query, api_key, search_engine_id):
+    if not api_key or not search_engine_id:
+        logging.error("Google API Key or Search Engine ID not provided.")
+        return "Error: Google API Key or Search Engine ID not provided."
+
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": api_key,
+        "cx": search_engine_id,
+        "q": query
+    }
     try:
-        logging.info("Agent Architect started.")
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Architect"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Architect"]["system_prompt"]},
-                {"role": "user", "content": echo_output},
-                {"role": "assistant", "content": hermes_output},
-                {"role": "assistant", "content": analyst_output},
-                {"role": "assistant", "content": scribe_output}
-            ]
-        )
-        architect_output = response.choices[0].message.content.strip()
-        logging.info("Agent Architect processed successfully.")
-        return architect_output
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        results = response.json()
+        items = results.get("items", [])
+        summary = ""
+        for item in items[:3]:  # Get top 3 results
+            title = item.get("title")
+            snippet = item.get("snippet")
+            link = item.get("link")
+            summary += f"Title: {title}\nSnippet: {snippet}\nLink: {link}\n\n"
+        logging.info("Search results retrieved successfully.")
+        return summary.strip()
     except Exception as e:
-        logging.error(f"Agent Architect error: {e}")
-        return f"Error in Agent Architect: {e}"
+        logging.error(f"Error fetching search results: {e}")
+        return f"Error fetching search results: {e}"
 
-def agent_composer(client, architect_output, analyst_output, scribe_output, echo_output):
-    if stop_flag:
-        return "Process stopped."
+class ProfilesDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Manage Agent Profiles")
+        self.parent = parent
+        self.agent_profiles = self.parent.agent_profiles
+        self.create_widgets()
+        self.geometry("800x600")
+
+    def create_widgets(self):
+        # Agent selection listbox
+        listbox_frame = ttk.Frame(self)
+        listbox_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        ttk.Label(listbox_frame, text="Select Agent:").pack(anchor="w")
+        self.agent_listbox = tk.Listbox(listbox_frame)
+        self.agent_listbox.pack(fill=tk.BOTH, expand=True)
+        for agent_name in self.agent_profiles.keys():
+            self.agent_listbox.insert(tk.END, agent_name)
+        self.agent_listbox.bind('<<ListboxSelect>>', self.on_agent_select)
+
+        # Profile editing frame
+        edit_frame = ttk.Frame(self)
+        edit_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        ttk.Label(edit_frame, text="Model:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.model_entry = ttk.Entry(edit_frame, width=50)
+        self.model_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(edit_frame, text="System Prompt:").grid(row=1, column=0, padx=5, pady=5, sticky="ne")
+        self.prompt_text = ScrolledText(edit_frame, width=50, height=20)
+        self.prompt_text.grid(row=1, column=1, padx=5, pady=5)
+
+        # Save and Cancel buttons
+        button_frame = ttk.Frame(edit_frame)
+        button_frame.grid(row=2, column=1, padx=5, pady=10, sticky="e")
+
+        save_button = ttk.Button(button_frame, text="Save", command=self.save_profile)
+        save_button.pack(side=tk.RIGHT, padx=5)
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        cancel_button.pack(side=tk.RIGHT)
+
+        self.current_agent = None
+
+    def on_agent_select(self, event):
+        selection = self.agent_listbox.curselection()
+        if selection:
+            index = selection[0]
+            agent_name = self.agent_listbox.get(index)
+            self.current_agent = agent_name
+            profile = self.agent_profiles[agent_name]
+            self.model_entry.delete(0, tk.END)
+            self.model_entry.insert(0, profile.get('model', ''))
+            self.prompt_text.delete(1.0, tk.END)
+            self.prompt_text.insert(tk.END, profile.get('system_prompt', ''))
+
+    def save_profile(self):
+        if self.current_agent:
+            model = self.model_entry.get().strip()
+            system_prompt = self.prompt_text.get(1.0, tk.END).strip()
+            self.agent_profiles[self.current_agent]['model'] = model
+            self.agent_profiles[self.current_agent]['system_prompt'] = system_prompt
+            self.parent.save_agent_profiles()
+            logging.info(f"Agent profile for {self.current_agent} saved.")
+            messagebox.showinfo("Profile Saved", f"Profile for {self.current_agent} has been saved.")
+        else:
+            messagebox.showwarning("No Agent Selected", "Please select an agent to save.")
+
+class ChatHistoryPopup(tk.Toplevel):
+    def __init__(self, parent, title, history):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("800x600")
+        self.configure_ui(history)
+
+    def configure_ui(self, history):
+        history_text = ScrolledText(self, font=("Helvetica", 12), state='disabled', wrap='word')
+        history_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        history_text.configure(state='normal')
+        for entry in history:
+            history_text.insert(tk.END, f"{entry['role']}: {entry['message']}\n\n")
+        history_text.configure(state='disabled')
+
+class SettingsDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Settings")
+        self.parent = parent
+        self.create_widgets()
+        self.geometry("600x400")
+
+    def create_widgets(self):
+        # OpenAI API Key
+        ttk.Label(self, text="OpenAI API Key:").grid(row=0, column=0, padx=10, pady=10, sticky="e")
+        self.openai_entry = ttk.Entry(self, width=50, show="*")
+        self.openai_entry.grid(row=0, column=1, padx=10, pady=10, sticky="w")
+        self.openai_entry.insert(0, self.parent.api_key or "")
+
+        # Google API Key
+        ttk.Label(self, text="Google API Key:").grid(row=1, column=0, padx=10, pady=10, sticky="e")
+        self.google_entry = ttk.Entry(self, width=50, show="*")
+        self.google_entry.grid(row=1, column=1, padx=10, pady=10, sticky="w")
+        self.google_entry.insert(0, self.parent.google_api_key or "")
+
+        # Search Engine ID
+        ttk.Label(self, text="Search Engine ID:").grid(row=2, column=0, padx=10, pady=10, sticky="e")
+        self.se_id_entry = ttk.Entry(self, width=50)
+        self.se_id_entry.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        self.se_id_entry.insert(0, self.parent.search_engine_id or "")
+
+        # Save and Cancel buttons
+        button_frame = ttk.Frame(self)
+        button_frame.grid(row=3, column=1, padx=10, pady=20, sticky="e")
+
+        save_button = ttk.Button(button_frame, text="Save", command=self.save_settings)
+        save_button.pack(side=tk.RIGHT, padx=5)
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        cancel_button.pack(side=tk.RIGHT)
+
+    def save_settings(self):
+        openai_key = self.openai_entry.get().strip()
+        google_key = self.google_entry.get().strip()
+        search_engine_id = self.se_id_entry.get().strip()
+
+        if openai_key:
+            self.parent.api_key = openai_key
+            openai.api_key = openai_key
+            self.parent.save_config("OPENAI_API_KEY", openai_key)
+            logging.info("OpenAI API key updated.")
+        if google_key:
+            self.parent.google_api_key = google_key
+            self.parent.save_config("GOOGLE_API_KEY", google_key)
+            logging.info("Google API key updated.")
+        if search_engine_id:
+            self.parent.search_engine_id = search_engine_id
+            self.parent.save_config("SEARCH_ENGINE_ID", search_engine_id)
+            logging.info("Search Engine ID updated.")
+
+        messagebox.showinfo("Settings Saved", "API keys and settings have been saved successfully.")
+        self.destroy()
+
+    def save_config(self, key, value):
+        config_path = self.parent.config_file
+        config = {}
+        if os.path.exists(config_path):
+            with open(config_path, "r") as file:
+                for line in file:
+                    if '=' in line:
+                        k, v = line.strip().split('=', 1)
+                        config[k] = v
+        config[key] = value
+        with open(config_path, "w") as file:
+            for k, v in config.items():
+                file.write(f"{k}={v}\n")
+        logging.info(f"{key} saved successfully.")
+
+def get_search_result(query, api_key, search_engine_id):
+    if not api_key or not search_engine_id:
+        logging.error("Google API Key or Search Engine ID not provided.")
+        return "Error: Google API Key or Search Engine ID not provided."
+
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": api_key,
+        "cx": search_engine_id,
+        "q": query
+    }
     try:
-        logging.info("Agent Composer started.")
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Composer"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Composer"]["system_prompt"]},
-                {"role": "user", "content": echo_output},
-                {"role": "assistant", "content": architect_output},
-                {"role": "assistant", "content": analyst_output},
-                {"role": "assistant", "content": scribe_output}
-            ]
-        )
-        composer_output = response.choices[0].message.content.strip()
-        logging.info("Agent Composer processed successfully.")
-        return composer_output
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        results = response.json()
+        items = results.get("items", [])
+        summary = ""
+        for item in items[:3]:  # Get top 3 results
+            title = item.get("title")
+            snippet = item.get("snippet")
+            link = item.get("link")
+            summary += f"Title: {title}\nSnippet: {snippet}\nLink: {link}\n\n"
+        logging.info("Search results retrieved successfully.")
+        return summary.strip()
     except Exception as e:
-        logging.error(f"Agent Composer error: {e}")
-        return f"Error in Agent Composer: {e}"
+        logging.error(f"Error fetching search results: {e}")
+        return f"Error fetching search results: {e}"
 
-def agent_critic(client, composer_output, echo_output):
-    if stop_flag:
-        return "Process stopped."
+class ProfilesDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Manage Agent Profiles")
+        self.parent = parent
+        self.agent_profiles = self.parent.agent_profiles
+        self.create_widgets()
+        self.geometry("800x600")
+
+    def create_widgets(self):
+        # Agent selection listbox
+        listbox_frame = ttk.Frame(self)
+        listbox_frame.pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=10)
+
+        ttk.Label(listbox_frame, text="Select Agent:").pack(anchor="w")
+        self.agent_listbox = tk.Listbox(listbox_frame)
+        self.agent_listbox.pack(fill=tk.BOTH, expand=True)
+        for agent_name in self.agent_profiles.keys():
+            self.agent_listbox.insert(tk.END, agent_name)
+        self.agent_listbox.bind('<<ListboxSelect>>', self.on_agent_select)
+
+        # Profile editing frame
+        edit_frame = ttk.Frame(self)
+        edit_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        ttk.Label(edit_frame, text="Model:").grid(row=0, column=0, padx=5, pady=5, sticky="e")
+        self.model_entry = ttk.Entry(edit_frame, width=50)
+        self.model_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        ttk.Label(edit_frame, text="System Prompt:").grid(row=1, column=0, padx=5, pady=5, sticky="ne")
+        self.prompt_text = ScrolledText(edit_frame, width=50, height=20)
+        self.prompt_text.grid(row=1, column=1, padx=5, pady=5)
+
+        # Save and Cancel buttons
+        button_frame = ttk.Frame(edit_frame)
+        button_frame.grid(row=2, column=1, padx=5, pady=10, sticky="e")
+
+        save_button = ttk.Button(button_frame, text="Save", command=self.save_profile)
+        save_button.pack(side=tk.RIGHT, padx=5)
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        cancel_button.pack(side=tk.RIGHT)
+
+        self.current_agent = None
+
+    def on_agent_select(self, event):
+        selection = self.agent_listbox.curselection()
+        if selection:
+            index = selection[0]
+            agent_name = self.agent_listbox.get(index)
+            self.current_agent = agent_name
+            profile = self.agent_profiles[agent_name]
+            self.model_entry.delete(0, tk.END)
+            self.model_entry.insert(0, profile.get('model', ''))
+            self.prompt_text.delete(1.0, tk.END)
+            self.prompt_text.insert(tk.END, profile.get('system_prompt', ''))
+
+    def save_profile(self):
+        if self.current_agent:
+            model = self.model_entry.get().strip()
+            system_prompt = self.prompt_text.get(1.0, tk.END).strip()
+            self.agent_profiles[self.current_agent]['model'] = model
+            self.agent_profiles[self.current_agent]['system_prompt'] = system_prompt
+            self.parent.save_agent_profiles()
+            logging.info(f"Agent profile for {self.current_agent} saved.")
+            messagebox.showinfo("Profile Saved", f"Profile for {self.current_agent} has been saved.")
+        else:
+            messagebox.showwarning("No Agent Selected", "Please select an agent to save.")
+
+class ChatHistoryPopup(tk.Toplevel):
+    def __init__(self, parent, title, history):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("800x600")
+        self.configure_ui(history)
+
+    def configure_ui(self, history):
+        history_text = ScrolledText(self, font=("Helvetica", 12), state='disabled', wrap='word')
+        history_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        history_text.configure(state='normal')
+        for entry in history:
+            history_text.insert(tk.END, f"{entry['role']}: {entry['message']}\n\n")
+        history_text.configure(state='disabled')
+
+class SettingsDialog(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Settings")
+        self.parent = parent
+        self.create_widgets()
+        self.geometry("600x400")
+
+    def create_widgets(self):
+        # OpenAI API Key
+        ttk.Label(self, text="OpenAI API Key:").grid(row=0, column=0, padx=10, pady=10, sticky="e")
+        self.openai_entry = ttk.Entry(self, width=50, show="*")
+        self.openai_entry.grid(row=0, column=1, padx=10, pady=10, sticky="w")
+        self.openai_entry.insert(0, self.parent.api_key or "")
+
+        # Google API Key
+        ttk.Label(self, text="Google API Key:").grid(row=1, column=0, padx=10, pady=10, sticky="e")
+        self.google_entry = ttk.Entry(self, width=50, show="*")
+        self.google_entry.grid(row=1, column=1, padx=10, pady=10, sticky="w")
+        self.google_entry.insert(0, self.parent.google_api_key or "")
+
+        # Search Engine ID
+        ttk.Label(self, text="Search Engine ID:").grid(row=2, column=0, padx=10, pady=10, sticky="e")
+        self.se_id_entry = ttk.Entry(self, width=50)
+        self.se_id_entry.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        self.se_id_entry.insert(0, self.parent.search_engine_id or "")
+
+        # Save and Cancel buttons
+        button_frame = ttk.Frame(self)
+        button_frame.grid(row=3, column=1, padx=10, pady=20, sticky="e")
+
+        save_button = ttk.Button(button_frame, text="Save", command=self.save_settings)
+        save_button.pack(side=tk.RIGHT, padx=5)
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
+        cancel_button.pack(side=tk.RIGHT)
+
+    def save_settings(self):
+        openai_key = self.openai_entry.get().strip()
+        google_key = self.google_entry.get().strip()
+        search_engine_id = self.se_id_entry.get().strip()
+
+        if openai_key:
+            self.parent.api_key = openai_key
+            openai.api_key = openai_key
+            self.parent.save_config("OPENAI_API_KEY", openai_key)
+            logging.info("OpenAI API key updated.")
+        if google_key:
+            self.parent.google_api_key = google_key
+            self.parent.save_config("GOOGLE_API_KEY", google_key)
+            logging.info("Google API key updated.")
+        if search_engine_id:
+            self.parent.search_engine_id = search_engine_id
+            self.parent.save_config("SEARCH_ENGINE_ID", search_engine_id)
+            logging.info("Search Engine ID updated.")
+
+        messagebox.showinfo("Settings Saved", "API keys and settings have been saved successfully.")
+        self.destroy()
+
+    def save_config(self, key, value):
+        config_path = self.parent.config_file
+        config = {}
+        if os.path.exists(config_path):
+            with open(config_path, "r") as file:
+                for line in file:
+                    if '=' in line:
+                        k, v = line.strip().split('=', 1)
+                        config[k] = v
+        config[key] = value
+        with open(config_path, "w") as file:
+            for k, v in config.items():
+                file.write(f"{k}={v}\n")
+        logging.info(f"{key} saved successfully.")
+
+def get_search_result(query, api_key, search_engine_id):
+    if not api_key or not search_engine_id:
+        logging.error("Google API Key or Search Engine ID not provided.")
+        return "Error: Google API Key or Search Engine ID not provided."
+
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": api_key,
+        "cx": search_engine_id,
+        "q": query
+    }
     try:
-        logging.info("Agent Critic started.")
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Critic"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Critic"]["system_prompt"]},
-                {"role": "user", "content": echo_output},
-                {"role": "assistant", "content": composer_output}
-            ]
-        )
-        critic_output = response.choices[0].message.content.strip()
-        logging.info("Agent Critic processed successfully.")
-        return critic_output
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        results = response.json()
+        items = results.get("items", [])
+        summary = ""
+        for item in items[:3]:  # Get top 3 results
+            title = item.get("title")
+            snippet = item.get("snippet")
+            link = item.get("link")
+            summary += f"Title: {title}\nSnippet: {snippet}\nLink: {link}\n\n"
+        logging.info("Search results retrieved successfully.")
+        return summary.strip()
     except Exception as e:
-        logging.error(f"Agent Critic error: {e}")
-        return f"Error in Agent Critic: {e}"
-
-def agent_courier(client, critic_output):
-    if stop_flag:
-        return "Process stopped."
-    try:
-        logging.info("Agent Courier started.")
-        response = client.chat.completions.create(
-            model=AGENT_PROFILES["Courier"]["model"],
-            messages=[
-                {"role": "system", "content": AGENT_PROFILES["Courier"]["system_prompt"]},
-                {"role": "assistant", "content": critic_output}
-            ]
-        )
-        courier_output = response.choices[0].message.content.strip()
-        logging.info("Agent Courier processed successfully.")
-        return courier_output
-    except Exception as e:
-        logging.error(f"Agent Courier error: {e}")
-        return f"Error in Agent Courier: {e}"
-
-def process_query(user_query, app):
-    global stop_flag
-    stop_flag = False
-    logging.info("Processing query through the multi-agent system...")
-
-    total_agents = 8  # Total number of agents
-    current_agent = 0
-
-    client = app.client  # Use the client instance from the app
-
-    # Agent Echo
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Echo processing...")
-    logging.info("Agent Echo processing...")
-    echo_output = agent_echo(user_query)
-    logging.info(f"Echo Output:\n{echo_output}\n")
-    app.result_text.insert(tk.END, f"Echo Output:\n{echo_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Hermes
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Hermes processing...")
-    logging.info("Agent Hermes processing...")
-    hermes_output = agent_hermes(client, echo_output)
-    logging.info(f"Hermes Output:\n{hermes_output}\n")
-    app.result_text.insert(tk.END, f"Hermes Output:\n{hermes_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Analyst
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Analyst processing...")
-    logging.info("Agent Analyst processing...")
-    analyst_output = agent_analyst(client, hermes_output, echo_output)
-    logging.info(f"Analyst Output:\n{analyst_output}\n")
-    app.result_text.insert(tk.END, f"Analyst Output:\n{analyst_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Scribe
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Scribe processing...")
-    logging.info("Agent Scribe processing...")
-    scribe_output = agent_scribe(client, analyst_output, echo_output, app)
-    logging.info(f"Scribe Output:\n{scribe_output}\n")
-    app.result_text.insert(tk.END, f"Scribe Output:\n{scribe_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Architect
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Architect processing...")
-    logging.info("Agent Architect processing...")
-    architect_output = agent_architect(client, hermes_output, analyst_output, scribe_output, echo_output)
-    logging.info(f"Architect Output:\n{architect_output}\n")
-    app.result_text.insert(tk.END, f"Architect Output:\n{architect_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Composer
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Composer processing...")
-    logging.info("Agent Composer processing...")
-    composer_output = agent_composer(client, architect_output, analyst_output, scribe_output, echo_output)
-    logging.info(f"Composer Output:\n{composer_output}\n")
-    app.result_text.insert(tk.END, f"Composer Output:\n{composer_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Critic
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Critic processing...")
-    logging.info("Agent Critic processing...")
-    critic_output = agent_critic(client, composer_output, echo_output)
-    logging.info(f"Critic Output:\n{critic_output}\n")
-    app.result_text.insert(tk.END, f"Critic Output:\n{critic_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    # Agent Courier
-    if stop_flag:
-        return "Process stopped."
-    app.status_label.config(text="Agent Courier processing...")
-    logging.info("Agent Courier processing...")
-    courier_output = agent_courier(client, critic_output)
-    logging.info(f"Final Output:\n{courier_output}\n")
-    app.result_text.insert(tk.END, f"Final Output:\n{courier_output}\n\n")
-    current_agent += 1
-    app.progress_var.set((current_agent / total_agents) * 100)
-
-    return courier_output
+        logging.error(f"Error fetching search results: {e}")
+        return f"Error fetching search results: {e}"
 
 if __name__ == "__main__":
     app = MultiAgentApp()
